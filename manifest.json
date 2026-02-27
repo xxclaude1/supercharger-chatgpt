@@ -4,10 +4,16 @@
   "version": "1.0.0",
   "description": "Stop ChatGPT from freezing and lagging. Instantly speed up long conversations and reduce memory usage. 100% free, no limits, no data collection.",
   "permissions": ["storage"],
-  "host_permissions": ["https://chatgpt.com/*"],
+  "host_permissions": [
+    "https://chatgpt.com/*",
+    "https://chat.openai.com/*"
+  ],
   "content_scripts": [
     {
-      "matches": ["https://chatgpt.com/*"],
+      "matches": [
+        "https://chatgpt.com/*",
+        "https://chat.openai.com/*"
+      ],
       "js": ["content.js"],
       "run_at": "document_idle"
     }
