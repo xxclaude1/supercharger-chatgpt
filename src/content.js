@@ -1,175 +1,172 @@
 /**
  * ChatGPT Turbo – Content Script
- * 
- * Core idea: ChatGPT renders every message in the DOM. In long conversations
- * (100+ messages), this causes massive lag because the browser must layout/paint
- * thousands of DOM nodes. 
- * 
- * Solution: We hide older messages by collapsing them (display:none), keeping only
- * the N most recent visible. A "Load more" button lets users reveal older messages
- * on demand. All messages remain in the DOM — we never delete anything.
- * 
- * How ChatGPT's DOM works (as of early 2026):
- * - The main conversation container holds article elements (or divs with data-message-id)
- * - Each message turn is typically an <article> or a div inside the scrollable area
- * - We target the conversation thread container and its direct children
+ *
+ * Hides older messages in long ChatGPT conversations to eliminate browser lag.
+ * Messages are hidden with CSS (display:none), never deleted.
+ * A "Load more" button lets users reveal older messages on demand.
  */
 
 (function () {
   'use strict';
 
   // ─── Configuration ───────────────────────────────────────────────
-  const DEFAULT_VISIBLE_COUNT = 30;  // messages to keep visible
-  const POLL_INTERVAL = 1500;        // ms between DOM checks
-  const LOAD_MORE_BATCH = 20;        // messages to reveal per click
+  const DEFAULT_VISIBLE_COUNT = 30;
+  const POLL_INTERVAL = 2000;
+  const LOAD_MORE_BATCH = 20;
+  const TRIM_DEBOUNCE_MS = 300;
 
   let visibleCount = DEFAULT_VISIBLE_COUNT;
   let isEnabled = true;
   let loadMoreButton = null;
   let statusBadge = null;
-  let lastMessageCount = 0;
+  let isTrimming = false;
+  let trimTimer = null;
+  let observer = null;
+  let lastUrl = location.href;
 
-  // Load saved settings
-  try {
-    const saved = localStorage.getItem('chatgpt-turbo-settings');
-    if (saved) {
-      const settings = JSON.parse(saved);
-      visibleCount = settings.visibleCount || DEFAULT_VISIBLE_COUNT;
-      isEnabled = settings.isEnabled !== undefined ? settings.isEnabled : true;
-    }
-  } catch (e) { /* ignore */ }
-
-  // ─── Utility: find the conversation message container ────────────
-  function getConversationContainer() {
-    // ChatGPT uses a scrollable div containing article elements for each message
-    // Strategy: find all <article> elements, their common parent is the container
-    const articles = document.querySelectorAll('article[data-testid^="conversation-turn"]');
-    if (articles.length > 0) {
-      return articles[0].parentElement;
-    }
-
-    // Fallback: look for the main thread container by role
-    const main = document.querySelector('main');
-    if (!main) return null;
-
-    // The conversation is usually inside a div with overflow-y auto/scroll
-    const scrollables = main.querySelectorAll('div[class]');
-    for (const el of scrollables) {
-      const style = window.getComputedStyle(el);
-      if (
-        (style.overflowY === 'auto' || style.overflowY === 'scroll') &&
-        el.children.length > 5
-      ) {
-        // Check if children look like message containers
-        const firstChild = el.children[0];
-        if (firstChild && (firstChild.tagName === 'ARTICLE' || firstChild.querySelector('article'))) {
-          return el;
-        }
+  // ─── Load saved settings ──────────────────────────────────────────
+  function loadSettings() {
+    try {
+      const saved = localStorage.getItem('chatgpt-turbo-settings');
+      if (saved) {
+        const settings = JSON.parse(saved);
+        if (settings.visibleCount) visibleCount = settings.visibleCount;
+        if (settings.isEnabled !== undefined) isEnabled = settings.isEnabled;
       }
-    }
-
-    return null;
+    } catch (e) { /* ignore */ }
   }
 
-  // ─── Get all message elements ────────────────────────────────────
+  function saveSettings() {
+    try {
+      localStorage.setItem('chatgpt-turbo-settings', JSON.stringify({
+        visibleCount: visibleCount,
+        isEnabled: isEnabled
+      }));
+    } catch (e) { /* ignore */ }
+  }
+
+  loadSettings();
+
+  // ─── Message selectors (multi-tier fallback) ──────────────────────
+  // ChatGPT's DOM can change. We try multiple selectors in order of reliability.
+
   function getMessageElements() {
-    // Primary: article elements with conversation turn test IDs
-    let messages = document.querySelectorAll('article[data-testid^="conversation-turn"]');
+    // Tier 1: article elements with data-testid (most reliable, used by all competing extensions)
+    var messages = document.querySelectorAll('article[data-testid^="conversation-turn"]');
     if (messages.length > 0) return Array.from(messages);
 
-    // Fallback: articles inside main
+    // Tier 2: any element with conversation-turn testid (if tag changes from article)
+    messages = document.querySelectorAll('[data-testid^="conversation-turn"]');
+    if (messages.length > 0) return Array.from(messages);
+
+    // Tier 3: elements with message author role attribute
+    messages = document.querySelectorAll('[data-message-author-role]');
+    if (messages.length > 0) return Array.from(messages);
+
+    // Tier 4: articles inside main
     messages = document.querySelectorAll('main article');
     if (messages.length > 0) return Array.from(messages);
-
-    // Last resort: direct children of the conversation container
-    const container = getConversationContainer();
-    if (container) {
-      return Array.from(container.children).filter(
-        el => el.tagName !== 'BUTTON' && !el.classList.contains('chatgpt-turbo-load-more')
-      );
-    }
 
     return [];
   }
 
+  // ─── Streaming detection ──────────────────────────────────────────
+  // Don't trim while ChatGPT is generating a response — it can break the stream.
+
+  function isStreaming() {
+    return !!document.querySelector('[data-testid="stop-button"]');
+  }
+
   // ─── Core: trim/hide older messages ──────────────────────────────
+
   function trimMessages() {
+    if (isTrimming) return;
     if (!isEnabled) return;
+    if (isStreaming()) return;  // don't touch DOM while streaming
 
-    const messages = getMessageElements();
-    if (messages.length === 0) return;
+    isTrimming = true;
 
-    const totalMessages = messages.length;
+    try {
+      var messages = getMessageElements();
+      if (messages.length === 0) {
+        isTrimming = false;
+        return;
+      }
 
-    // Only act if there are more messages than our visible threshold
-    if (totalMessages <= visibleCount) {
-      // Show all, remove load-more button if present
-      messages.forEach(msg => {
-        msg.style.display = '';
-        msg.classList.remove('chatgpt-turbo-hidden');
-      });
-      removeLoadMoreButton();
-      updateBadge(totalMessages, 0);
-      lastMessageCount = totalMessages;
-      return;
-    }
+      var totalMessages = messages.length;
 
-    const hiddenCount = totalMessages - visibleCount;
-    let hiddenActual = 0;
-
-    messages.forEach((msg, index) => {
-      if (index < hiddenCount) {
-        if (!msg.classList.contains('chatgpt-turbo-hidden')) {
-          msg.style.display = 'none';
-          msg.classList.add('chatgpt-turbo-hidden');
+      // Not enough messages to trim — show all, clean up UI
+      if (totalMessages <= visibleCount) {
+        for (var i = 0; i < messages.length; i++) {
+          messages[i].classList.remove('chatgpt-turbo-hidden');
         }
-        hiddenActual++;
-      } else {
-        if (msg.classList.contains('chatgpt-turbo-hidden')) {
-          msg.style.display = '';
-          msg.classList.remove('chatgpt-turbo-hidden');
+        removeLoadMoreButton();
+        updateBadge(totalMessages, 0);
+        isTrimming = false;
+        return;
+      }
+
+      var hiddenCount = totalMessages - visibleCount;
+
+      // Hide older messages, show recent ones
+      for (var j = 0; j < totalMessages; j++) {
+        if (j < hiddenCount) {
+          messages[j].classList.add('chatgpt-turbo-hidden');
+        } else {
+          messages[j].classList.remove('chatgpt-turbo-hidden');
         }
       }
-    });
 
-    // Add or update "Load more" button
-    if (hiddenActual > 0) {
-      ensureLoadMoreButton(hiddenActual);
-    } else {
-      removeLoadMoreButton();
+      // Insert load-more button
+      if (hiddenCount > 0) {
+        ensureLoadMoreButton(hiddenCount, messages);
+      } else {
+        removeLoadMoreButton();
+      }
+
+      updateBadge(totalMessages, hiddenCount);
+    } finally {
+      isTrimming = false;
     }
+  }
 
-    updateBadge(totalMessages, hiddenActual);
-    lastMessageCount = totalMessages;
+  // Debounced trim — called by observer and polling
+  function scheduleTrim() {
+    if (trimTimer) clearTimeout(trimTimer);
+    trimTimer = setTimeout(trimMessages, TRIM_DEBOUNCE_MS);
   }
 
   // ─── Load More Button ───────────────────────────────────────────
-  function ensureLoadMoreButton(hiddenCount) {
-    const messages = getMessageElements();
-    if (messages.length === 0) return;
 
-    // Find the first visible message to insert before it
-    const firstVisible = messages.find(m => !m.classList.contains('chatgpt-turbo-hidden'));
-    if (!firstVisible) return;
+  function ensureLoadMoreButton(hiddenCount, messages) {
+    // Find first visible message
+    var firstVisible = null;
+    for (var i = 0; i < messages.length; i++) {
+      if (!messages[i].classList.contains('chatgpt-turbo-hidden')) {
+        firstVisible = messages[i];
+        break;
+      }
+    }
+    if (!firstVisible || !firstVisible.parentElement) return;
 
     if (!loadMoreButton) {
       loadMoreButton = document.createElement('button');
       loadMoreButton.className = 'chatgpt-turbo-load-more';
+      loadMoreButton.setAttribute('data-turbo-ui', 'true');
       loadMoreButton.addEventListener('click', handleLoadMore);
     }
 
-    loadMoreButton.innerHTML = `
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style="transform:rotate(180deg)">
-        <path d="M8 3v10M4 9l4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-      </svg>
-      Load ${Math.min(hiddenCount, LOAD_MORE_BATCH)} more messages (${hiddenCount} hidden)
-    `;
+    var batch = Math.min(hiddenCount, LOAD_MORE_BATCH);
+    loadMoreButton.innerHTML =
+      '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" style="transform:rotate(180deg)">' +
+      '<path d="M8 3v10M4 9l4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>' +
+      '</svg>' +
+      'Load ' + batch + ' more messages (' + hiddenCount + ' hidden)';
 
-    // Insert before first visible message
-    if (loadMoreButton.parentElement !== firstVisible.parentElement) {
-      firstVisible.parentElement.insertBefore(loadMoreButton, firstVisible);
-    } else if (loadMoreButton.nextElementSibling !== firstVisible) {
-      firstVisible.parentElement.insertBefore(loadMoreButton, firstVisible);
+    // Insert before first visible message if not already there
+    var container = firstVisible.parentElement;
+    if (!loadMoreButton.parentElement || loadMoreButton.nextElementSibling !== firstVisible) {
+      container.insertBefore(loadMoreButton, firstVisible);
     }
   }
 
@@ -181,97 +178,107 @@
   }
 
   function handleLoadMore() {
-    // Increase visible count to show more messages
     visibleCount += LOAD_MORE_BATCH;
     saveSettings();
     trimMessages();
   }
 
-  // ─── Status Badge (floating indicator) ──────────────────────────
+  // ─── Status Badge ────────────────────────────────────────────────
+
   function updateBadge(total, hidden) {
     if (!statusBadge) {
       statusBadge = document.createElement('div');
       statusBadge.className = 'chatgpt-turbo-badge';
+      statusBadge.setAttribute('data-turbo-ui', 'true');
       document.body.appendChild(statusBadge);
     }
 
     if (hidden > 0) {
-      statusBadge.innerHTML = `⚡ Turbo: ${hidden} trimmed`;
-      statusBadge.classList.add('chatgpt-turbo-badge-active');
-      statusBadge.classList.remove('chatgpt-turbo-badge-idle');
+      statusBadge.textContent = '\u26A1 Turbo: ' + hidden + ' trimmed';
+      statusBadge.className = 'chatgpt-turbo-badge chatgpt-turbo-badge-active';
+      statusBadge.style.display = '';
     } else if (total > 10) {
-      statusBadge.innerHTML = `⚡ Turbo: monitoring`;
-      statusBadge.classList.remove('chatgpt-turbo-badge-active');
-      statusBadge.classList.add('chatgpt-turbo-badge-idle');
+      statusBadge.textContent = '\u26A1 Turbo: monitoring';
+      statusBadge.className = 'chatgpt-turbo-badge chatgpt-turbo-badge-idle';
+      statusBadge.style.display = '';
     } else {
       statusBadge.style.display = 'none';
-      return;
     }
-    statusBadge.style.display = '';
   }
 
-  // ─── Settings Persistence ───────────────────────────────────────
-  function saveSettings() {
-    try {
-      localStorage.setItem('chatgpt-turbo-settings', JSON.stringify({
-        visibleCount,
-        isEnabled
-      }));
-    } catch (e) { /* ignore */ }
+  // ─── Restore all messages (when disabled) ─────────────────────────
+
+  function restoreAll() {
+    var messages = getMessageElements();
+    for (var i = 0; i < messages.length; i++) {
+      messages[i].classList.remove('chatgpt-turbo-hidden');
+    }
+    removeLoadMoreButton();
+    if (statusBadge) statusBadge.style.display = 'none';
   }
 
   // ─── Listen for messages from popup ─────────────────────────────
-  chrome.runtime?.onMessage?.addListener((msg, sender, sendResponse) => {
-    if (msg.type === 'GET_STATUS') {
-      const messages = getMessageElements();
-      const hidden = messages.filter(m => m.classList.contains('chatgpt-turbo-hidden')).length;
-      sendResponse({
-        isEnabled,
-        visibleCount,
-        totalMessages: messages.length,
-        hiddenMessages: hidden
-      });
-    } else if (msg.type === 'SET_ENABLED') {
-      isEnabled = msg.value;
-      if (!isEnabled) {
-        // Show all messages
-        getMessageElements().forEach(m => {
-          m.style.display = '';
-          m.classList.remove('chatgpt-turbo-hidden');
-        });
-        removeLoadMoreButton();
-        if (statusBadge) statusBadge.style.display = 'none';
-      } else {
-        trimMessages();
-      }
-      saveSettings();
-      sendResponse({ ok: true });
-    } else if (msg.type === 'SET_VISIBLE_COUNT') {
-      visibleCount = msg.value;
-      saveSettings();
-      trimMessages();
-      sendResponse({ ok: true });
-    }
-    return true;
-  });
 
-  // ─── Observe DOM for new messages & navigation ──────────────────
-  let observer = null;
+  if (chrome.runtime && chrome.runtime.onMessage) {
+    chrome.runtime.onMessage.addListener(function (msg, sender, sendResponse) {
+      if (msg.type === 'GET_STATUS') {
+        var messages = getMessageElements();
+        var hidden = 0;
+        for (var i = 0; i < messages.length; i++) {
+          if (messages[i].classList.contains('chatgpt-turbo-hidden')) hidden++;
+        }
+        sendResponse({
+          isEnabled: isEnabled,
+          visibleCount: visibleCount,
+          totalMessages: messages.length,
+          hiddenMessages: hidden
+        });
+      } else if (msg.type === 'SET_ENABLED') {
+        isEnabled = msg.value;
+        saveSettings();
+        if (!isEnabled) {
+          restoreAll();
+        } else {
+          trimMessages();
+        }
+        sendResponse({ ok: true });
+      } else if (msg.type === 'SET_VISIBLE_COUNT') {
+        visibleCount = msg.value;
+        saveSettings();
+        trimMessages();
+        sendResponse({ ok: true });
+      }
+      return true;  // keep channel open for async sendResponse
+    });
+  }
+
+  // ─── MutationObserver ────────────────────────────────────────────
 
   function startObserving() {
-    const target = document.querySelector('main') || document.body;
+    if (observer) observer.disconnect();
 
-    observer = new MutationObserver((mutations) => {
-      // Debounce: only run trim if new nodes were added
-      let hasNewNodes = false;
-      for (const mutation of mutations) {
-        if (mutation.addedNodes.length > 0) {
-          hasNewNodes = true;
+    var target = document.querySelector('main') || document.body;
+
+    observer = new MutationObserver(function (mutations) {
+      // Skip mutations from our own UI elements
+      if (isTrimming) return;
+
+      var hasRelevant = false;
+      for (var i = 0; i < mutations.length; i++) {
+        var m = mutations[i];
+        // Ignore changes to our own injected elements
+        if (m.target && m.target.getAttribute && m.target.getAttribute('data-turbo-ui') === 'true') continue;
+        if (m.target && (m.target.className === 'chatgpt-turbo-badge' ||
+            m.target.className === 'chatgpt-turbo-load-more')) continue;
+
+        if (m.addedNodes.length > 0 || m.removedNodes.length > 0) {
+          hasRelevant = true;
           break;
         }
       }
-      if (hasNewNodes) {
-        requestAnimationFrame(trimMessages);
+
+      if (hasRelevant) {
+        scheduleTrim();
       }
     });
 
@@ -281,36 +288,46 @@
     });
   }
 
-  // ─── Handle ChatGPT SPA navigation ─────────────────────────────
-  // ChatGPT is a SPA — when user switches conversations, we need to reset
-  let lastUrl = location.href;
+  // ─── SPA Navigation Detection ─────────────────────────────────────
 
   function checkNavigation() {
     if (location.href !== lastUrl) {
       lastUrl = location.href;
-      // Reset visible count on conversation switch
-      visibleCount = DEFAULT_VISIBLE_COUNT;
-      lastMessageCount = 0;
+      // Reload settings (don't reset to default — user's choice persists)
+      loadSettings();
       removeLoadMoreButton();
-      // Small delay to let new conversation DOM render
-      setTimeout(trimMessages, 500);
+      // Wait for new conversation DOM to render
+      setTimeout(trimMessages, 800);
     }
   }
 
-  // ─── Initialize ─────────────────────────────────────────────────
-  function init() {
-    console.log('[ChatGPT Turbo] Extension loaded. Monitoring for long conversations...');
+  // Intercept pushState for instant SPA detection
+  var origPushState = history.pushState;
+  history.pushState = function () {
+    origPushState.apply(this, arguments);
+    setTimeout(checkNavigation, 100);
+  };
+  window.addEventListener('popstate', function () {
+    setTimeout(checkNavigation, 100);
+  });
 
-    // Initial trim
+  // ─── Initialize ─────────────────────────────────────────────────
+
+  function init() {
+    console.log('[ChatGPT Turbo] Loaded. Monitoring for long conversations...');
+
+    // Try initial trim
     trimMessages();
 
-    // Start observing DOM changes
+    // Start watching for DOM changes
     startObserving();
 
-    // Poll as backup (handles edge cases the observer might miss)
-    setInterval(() => {
+    // Polling backup — catches edge cases observer might miss
+    setInterval(function () {
       checkNavigation();
-      trimMessages();
+      if (isEnabled && !isStreaming()) {
+        trimMessages();
+      }
     }, POLL_INTERVAL);
   }
 
@@ -318,7 +335,9 @@
   if (document.readyState === 'complete' || document.readyState === 'interactive') {
     setTimeout(init, 500);
   } else {
-    document.addEventListener('DOMContentLoaded', () => setTimeout(init, 500));
+    document.addEventListener('DOMContentLoaded', function () {
+      setTimeout(init, 500);
+    });
   }
 
 })();

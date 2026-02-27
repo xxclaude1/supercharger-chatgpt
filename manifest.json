@@ -3,7 +3,7 @@
   "name": "ChatGPT Turbo – Kill Lag in Long Chats",
   "version": "1.0.0",
   "description": "Instantly eliminate lag, freezing, and jitter in long ChatGPT conversations. Free forever. No data collection.",
-  "permissions": [],
+  "permissions": ["tabs"],
   "host_permissions": [
     "https://chatgpt.com/*",
     "https://chat.openai.com/*"

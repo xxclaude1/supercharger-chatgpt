@@ -1,75 +1,86 @@
 // ─── ChatGPT Turbo – Popup Script ───────────────────────────────
 
-const enableToggle = document.getElementById('enableToggle');
-const visibleSlider = document.getElementById('visibleSlider');
-const visibleValue = document.getElementById('visibleValue');
-const totalMessages = document.getElementById('totalMessages');
-const hiddenMessages = document.getElementById('hiddenMessages');
-const statusDot = document.getElementById('statusDot');
+var enableToggle = document.getElementById('enableToggle');
+var visibleSlider = document.getElementById('visibleSlider');
+var visibleValue = document.getElementById('visibleValue');
+var totalMessagesEl = document.getElementById('totalMessages');
+var hiddenMessagesEl = document.getElementById('hiddenMessages');
+var statusDot = document.getElementById('statusDot');
 
-// Get current tab and request status from content script
-async function getActiveTab() {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  return tab;
+// Get the active tab
+function getActiveTab(callback) {
+  chrome.tabs.query({ active: true, currentWindow: true }, function (tabs) {
+    callback(tabs && tabs[0] ? tabs[0] : null);
+  });
 }
 
-async function refreshStatus() {
-  const tab = await getActiveTab();
-  if (!tab || !tab.url?.includes('chatgpt.com')) {
-    totalMessages.textContent = '—';
-    hiddenMessages.textContent = '—';
-    statusDot.className = 'status-dot off';
-    return;
-  }
+// Check if tab is on ChatGPT
+function isChatGPTTab(tab) {
+  if (!tab || !tab.url) return false;
+  return tab.url.indexOf('chatgpt.com') !== -1 || tab.url.indexOf('chat.openai.com') !== -1;
+}
 
-  try {
-    const response = await chrome.tabs.sendMessage(tab.id, { type: 'GET_STATUS' });
-    if (response) {
+// Refresh stats from content script
+function refreshStatus() {
+  getActiveTab(function (tab) {
+    if (!tab || !isChatGPTTab(tab)) {
+      totalMessagesEl.textContent = '\u2014';
+      hiddenMessagesEl.textContent = '\u2014';
+      statusDot.className = 'status-dot off';
+      return;
+    }
+
+    chrome.tabs.sendMessage(tab.id, { type: 'GET_STATUS' }, function (response) {
+      if (chrome.runtime.lastError || !response) {
+        totalMessagesEl.textContent = '\u2014';
+        hiddenMessagesEl.textContent = '\u2014';
+        statusDot.className = 'status-dot off';
+        return;
+      }
+
       enableToggle.checked = response.isEnabled;
       visibleSlider.value = response.visibleCount;
       visibleValue.textContent = response.visibleCount;
-      totalMessages.textContent = response.totalMessages;
-      hiddenMessages.textContent = response.hiddenMessages;
+      totalMessagesEl.textContent = response.totalMessages;
+      hiddenMessagesEl.textContent = response.hiddenMessages;
       statusDot.className = response.isEnabled ? 'status-dot on' : 'status-dot off';
-    }
-  } catch (e) {
-    // Content script not loaded yet
-    totalMessages.textContent = '—';
-    hiddenMessages.textContent = '—';
-    statusDot.className = 'status-dot off';
-  }
+    });
+  });
 }
 
 // Toggle enabled/disabled
-enableToggle.addEventListener('change', async () => {
-  const tab = await getActiveTab();
-  if (!tab) return;
-  try {
-    await chrome.tabs.sendMessage(tab.id, {
+enableToggle.addEventListener('change', function () {
+  getActiveTab(function (tab) {
+    if (!tab) return;
+    chrome.tabs.sendMessage(tab.id, {
       type: 'SET_ENABLED',
       value: enableToggle.checked
+    }, function () {
+      if (chrome.runtime.lastError) return;
+      statusDot.className = enableToggle.checked ? 'status-dot on' : 'status-dot off';
+      setTimeout(refreshStatus, 300);
     });
-    statusDot.className = enableToggle.checked ? 'status-dot on' : 'status-dot off';
-    setTimeout(refreshStatus, 300);
-  } catch (e) { /* ignore */ }
+  });
 });
 
-// Visible messages slider
-visibleSlider.addEventListener('input', () => {
+// Visible messages slider — update label on input, send on change
+visibleSlider.addEventListener('input', function () {
   visibleValue.textContent = visibleSlider.value;
 });
 
-visibleSlider.addEventListener('change', async () => {
-  const tab = await getActiveTab();
-  if (!tab) return;
-  try {
-    await chrome.tabs.sendMessage(tab.id, {
+visibleSlider.addEventListener('change', function () {
+  getActiveTab(function (tab) {
+    if (!tab) return;
+    chrome.tabs.sendMessage(tab.id, {
       type: 'SET_VISIBLE_COUNT',
       value: parseInt(visibleSlider.value, 10)
+    }, function () {
+      if (chrome.runtime.lastError) return;
+      setTimeout(refreshStatus, 300);
     });
-    setTimeout(refreshStatus, 300);
-  } catch (e) { /* ignore */ }
+  });
 });
 
-// Initial load
+// Initial load + polling
 refreshStatus();
+setInterval(refreshStatus, 2000);
