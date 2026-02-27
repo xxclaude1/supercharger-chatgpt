@@ -1,0 +1,28 @@
+{
+  "manifest_version": 3,
+  "name": "Supercharger for ChatGPT — Fix Lag in Long Chats",
+  "version": "1.0.0",
+  "description": "Stop ChatGPT from freezing and lagging. Instantly speed up long conversations and reduce memory usage. 100% free, no limits, no data collection.",
+  "permissions": ["storage"],
+  "host_permissions": ["https://chatgpt.com/*"],
+  "content_scripts": [
+    {
+      "matches": ["https://chatgpt.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}
