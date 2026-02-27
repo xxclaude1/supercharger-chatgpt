@@ -10,7 +10,7 @@
   'use strict';
 
   // ─── Configuration ───────────────────────────────────────────────
-  const DEFAULT_VISIBLE_COUNT = 30;
+  const DEFAULT_VISIBLE_COUNT = 5;   // low default so users see it working immediately
   const POLL_INTERVAL = 2000;
   const LOAD_MORE_BATCH = 20;
   const TRIM_DEBOUNCE_MS = 300;
@@ -94,6 +94,7 @@
       }
 
       var totalMessages = messages.length;
+      console.log('[ChatGPT Turbo] trimMessages: total=' + totalMessages + ' visibleCount=' + visibleCount);
 
       // Not enough messages to trim — show all, clean up UI
       if (totalMessages <= visibleCount) {
@@ -116,6 +117,8 @@
           messages[j].classList.remove('chatgpt-turbo-hidden');
         }
       }
+
+      console.log('[ChatGPT Turbo] Hidden ' + hiddenCount + ' messages, showing ' + visibleCount);
 
       // Insert load-more button
       if (hiddenCount > 0) {
@@ -314,7 +317,14 @@
   // ─── Initialize ─────────────────────────────────────────────────
 
   function init() {
-    console.log('[ChatGPT Turbo] Loaded. Monitoring for long conversations...');
+    console.log('[ChatGPT Turbo] Content script loaded on:', location.href);
+    console.log('[ChatGPT Turbo] Settings — enabled:', isEnabled, 'visibleCount:', visibleCount);
+
+    var msgs = getMessageElements();
+    console.log('[ChatGPT Turbo] Found', msgs.length, 'messages on page');
+    if (msgs.length > 0) {
+      console.log('[ChatGPT Turbo] First message tag:', msgs[0].tagName, 'testid:', msgs[0].getAttribute('data-testid'));
+    }
 
     // Try initial trim
     trimMessages();
