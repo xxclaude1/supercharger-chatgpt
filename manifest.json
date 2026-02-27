@@ -1,9 +1,9 @@
 {
   "manifest_version": 3,
-  "name": "Supercharger for ChatGPT — Fix Lag in Long Chats",
+  "name": "ChatGPT Turbo – Kill Lag in Long Chats",
   "version": "1.0.0",
-  "description": "Stop ChatGPT from freezing and lagging. Instantly speed up long conversations and reduce memory usage. 100% free, no limits, no data collection.",
-  "permissions": ["storage"],
+  "description": "Instantly eliminate lag, freezing, and jitter in long ChatGPT conversations. Free forever. No data collection.",
+  "permissions": [],
   "host_permissions": [
     "https://chatgpt.com/*",
     "https://chat.openai.com/*"
@@ -14,12 +14,13 @@
         "https://chatgpt.com/*",
         "https://chat.openai.com/*"
       ],
-      "js": ["content.js"],
+      "js": ["src/content.js"],
+      "css": ["src/styles.css"],
       "run_at": "document_idle"
     }
   ],
   "action": {
-    "default_popup": "popup.html",
+    "default_popup": "src/popup.html",
     "default_icon": {
       "16": "icons/icon16.png",
       "48": "icons/icon48.png",

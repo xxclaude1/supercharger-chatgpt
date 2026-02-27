@@ -1,101 +1,176 @@
-# PRD: Supercharger for ChatGPT
+# PRD — ChatGPT Turbo
 
-## Problem
-When ChatGPT conversations get long (100+ messages), the browser grinds to a halt. Typing lags, scrolling stutters, CPU spikes, and Chrome becomes nearly unusable. This is because ChatGPT renders every single message in the DOM — hundreds of complex HTML elements with code blocks, markdown, images, and nested structures. The browser can't handle the layout and paint calculations for all of it simultaneously.
+## 1. Problem Statement
 
-This is a pure client-side rendering problem. OpenAI hasn't fixed it. The existing solution (Speed Booster for ChatGPT) charges $7.99 for full functionality and limits free users to 30 lag-free prompts per day.
+ChatGPT's web interface renders every message in a conversation as a full DOM node. In long conversations (50–500+ messages), this causes severe browser performance degradation:
 
-## Solution
-**Supercharger for ChatGPT** — a free, open-source Chrome extension that virtualizes ChatGPT's message list. It hides older messages from the DOM (using `display: none`) so the browser only renders the most recent ones. Users can load older messages on demand by scrolling up and clicking "Load more."
+- **Typing lag:** 200ms–2s input delay
+- **Scroll jitter:** Dropped frames and freezing during scroll
+- **High resource usage:** 1–4GB RAM, sustained CPU spikes
+- **Battery drain:** Noticeable on laptops during extended sessions
 
-## Target User
-Anyone who uses ChatGPT for long sessions — coders, writers, researchers, power users. People who've experienced the lag and either suffer through it or start new chats to avoid it.
+This affects power users — developers, researchers, writers — who rely on long-running conversations daily.
 
-## Key Principles
-1. **100% Free** — No paid tier. No limits. No "upgrade to PRO" nags. Ever.
-2. **Zero Config** — Install and forget. Works automatically on every ChatGPT conversation.
-3. **100% Private** — All processing happens locally. No data leaves the browser. No analytics. No tracking.
-4. **Minimal Footprint** — Tiny extension size. No frameworks. No build tools. Plain JavaScript.
-5. **Open Source** — Full transparency. Anyone can audit the code.
+### Market Validation
+- **Speed Booster for ChatGPT** (competitor): 20,000+ users, 4.6★ rating (191 reviews), charges for PRO features
+- **GPT Boost:** 4.1★, similar approach
+- **LightSession Pro:** 4.1★, DOM trimming approach
+- **Gippity Pruner:** 5.0★ (few reviews), newer entrant
 
-## Features
+This is a validated problem with proven demand. Existing solutions charge money or have daily usage limits.
 
-### V1.0 (MVP)
-- [ ] **Auto-trim messages** — When a conversation exceeds N messages (default: 50), hide older messages
-- [ ] **"Load more" button** — Appears at top of chat, reveals next batch of hidden messages when clicked
-- [ ] **Status banner** — Shows "Supercharger Active — X messages optimized" at top of conversation
-- [ ] **Popup UI** — Toggle extension on/off, adjust visible message count via slider
-- [ ] **Settings persistence** — Remember user's preferred message count across sessions
-- [ ] **Auto-detect new messages** — MutationObserver re-trims when new messages are added
+## 2. Solution
 
-### V1.1 (Fast Follow)
-- [ ] **Firefox support** — Port to Firefox Add-ons
-- [ ] **Keyboard shortcut** — Quick toggle on/off
-- [ ] **Per-conversation memory** — Remember scroll position per chat
+**ChatGPT Turbo** — a free, open-source Chrome extension that keeps only the most recent N messages rendered in the DOM, hiding older messages to eliminate lag.
 
-### Future Considerations
-- Landing page / marketing site
-- Edge/Brave/Arc support (Chromium-based should work automatically)
+### Core Mechanism
+1. Content script injects on `chatgpt.com`
+2. Identifies all message `<article>` elements
+3. Hides all but the most recent N messages (`display: none`)
+4. Inserts a "Load more" button above the first visible message
+5. MutationObserver re-trims when new messages arrive
+6. Polling backup catches SPA navigation edge cases
 
-## Technical Spec
+### Key Differentiators vs. Competitors
+| Feature | ChatGPT Turbo | Speed Booster | GPT Boost |
+|---------|:---:|:---:|:---:|
+| **Price** | Free forever | Freemium ($) | Freemium |
+| **Open source** | ✅ MIT | ❌ | ❌ |
+| **Daily limits** | None | 30 chats/day free | Unknown |
+| **Data collection** | None | Claims none | Unknown |
+| **Configurable threshold** | ✅ 10–100 | PRO only | ✅ |
+| **Build tools required** | None | Unknown | Unknown |
 
-### Manifest V3
-```json
-{
-  "manifest_version": 3,
-  "name": "Supercharger for ChatGPT",
-  "permissions": ["storage"],
-  "host_permissions": ["https://chatgpt.com/*"],
-  "content_scripts": [{
-    "matches": ["https://chatgpt.com/*"],
-    "js": ["content.js"]
-  }],
-  "action": {
-    "default_popup": "popup.html",
-    "default_icon": { "16": "icons/icon16.png", "48": "icons/icon48.png", "128": "icons/icon128.png" }
-  }
-}
+## 3. User Personas
+
+### Primary: The Power Coder
+- Uses ChatGPT for multi-hour coding sessions
+- Conversations reach 100–300 messages
+- Notices lag after ~50 messages
+- Technically savvy, comfortable installing extensions
+
+### Secondary: The Researcher / Writer
+- Uses ChatGPT for long brainstorming or writing sessions
+- Less technical but recognizes performance issues
+- Values simplicity — install and forget
+
+## 4. Feature Requirements
+
+### P0 — Must Have (v1.0)
+- [ ] DOM trimming of older messages (display: none)
+- [ ] Configurable visible message count (10–100, default 30)
+- [ ] "Load more messages" button above first visible message
+- [ ] Floating status badge showing trim state
+- [ ] Popup UI with toggle on/off and message count slider
+- [ ] Automatic re-trim when new messages arrive (MutationObserver)
+- [ ] SPA navigation detection (conversation switching)
+- [ ] Settings persistence via localStorage
+- [ ] Works on chatgpt.com
+
+### P1 — Should Have (v1.1)
+- [ ] Auto-detect optimal visible count based on device performance
+- [ ] Keyboard shortcut to toggle trimming
+- [ ] "Scroll to bottom" quick button
+- [ ] Memory usage indicator in popup
+- [ ] Support for chat branching / regenerated responses
+
+### P2 — Nice to Have (v1.2+)
+- [ ] Firefox support (manifest v2 compatibility)
+- [ ] Safari support (Web Extension)
+- [ ] Export conversation as markdown
+- [ ] Dark/light theme matching ChatGPT's current theme
+
+## 5. Technical Architecture
+
+```
+┌──────────────────────────────────────────────┐
+│                   Chrome                     │
+│                                              │
+│  ┌──────────┐    chrome.runtime     ┌──────┐ │
+│  │ popup.js │◄──── messages ───────►│      │ │
+│  │ popup.html│                      │ cont │ │
+│  └──────────┘                      │ ent. │ │
+│                                    │  js   │ │
+│  ┌──────────────────────────┐      │      │ │
+│  │     chatgpt.com DOM      │      │      │ │
+│  │                          │◄─────│      │ │
+│  │  article (hidden)        │ hide │      │ │
+│  │  article (hidden)        │      │      │ │
+│  │  article (hidden)        │      │      │ │
+│  │  [Load more] button      │      │      │ │
+│  │  article (visible) ✓     │      │      │ │
+│  │  article (visible) ✓     │      │      │ │
+│  │  article (visible) ✓     │      └──────┘ │
+│  └──────────────────────────┘               │
+└──────────────────────────────────────────────┘
 ```
 
-### Content Script Logic
-1. Wait for conversation container to appear in DOM
-2. Set up MutationObserver on the container
-3. On mutation (new messages added):
-   a. Count all message elements (`[data-testid^="conversation-turn-"]`)
-   b. If count > threshold, hide oldest messages via `display: none`
-   c. Insert/update "Load more" button at top if hidden messages exist
-   d. Insert/update status banner showing optimization count
-4. "Load more" button reveals next batch (default batch size: 20)
-5. Listen for navigation events (ChatGPT is an SPA — URL changes without page reload)
+### Communication Flow
+1. **Content script → DOM:** Direct manipulation (querySelector, style changes)
+2. **Popup → Content script:** `chrome.tabs.sendMessage()` for settings changes
+3. **Content script → Popup:** Response to `GET_STATUS` messages
+4. **Persistence:** `localStorage` on chatgpt.com domain
 
-### Popup UI
-- Toggle switch: Enable/Disable Supercharger
-- Slider: Number of visible messages (10–200, default 50)
-- Stats display: Messages optimized in current chat
-- Clean, minimal design matching ChatGPT's aesthetic
+## 6. Chrome Web Store Listing
 
-### Privacy
-- `content_scripts` only runs on `chatgpt.com`
-- No `tabs`, `webRequest`, or broad permissions
-- `storage` permission only for saving user preferences locally
-- No external network requests whatsoever
+### Title
+ChatGPT Turbo – Kill Lag in Long Chats (Free & Open Source)
 
-## Success Metrics
-- Chrome Web Store rating > 4.5 stars
-- 10,000+ users within first 3 months
-- Zero privacy complaints
-- Works reliably across ChatGPT UI updates
+### Short Description
+Instantly eliminate lag, freezing, and jitter in long ChatGPT conversations. Free forever. No data collection. Open source.
 
-## Competitive Landscape
-| Feature | Speed Booster (competitor) | Supercharger (us) |
-|---|---|---|
-| Price | $7.99 PRO | Free forever |
-| Daily limits | 30 prompts (free tier) | Unlimited |
-| Custom thresholds | PRO only | Free |
-| Open source | No | Yes |
-| Data collection | Unknown | Zero |
-| Quiet mode | PRO only | Default (no nags) |
+### Full Description
 
-## Risk
-- **ChatGPT DOM changes** — OpenAI can change their HTML structure at any time. Mitigation: use resilient selectors, monitor for breakage, ship fixes fast.
-- **OpenAI fixes the lag themselves** — Unlikely short-term given it's been an issue for 2+ years. If they do, great — problem solved for everyone.
+**Stop ChatGPT from lagging — instantly and for free.**
+
+ChatGPT Turbo makes massive conversations smooth again by rendering only the most recent messages. No lost context, no data collection, no paywalls. Ever.
+
+If you use ChatGPT for coding, writing, research, or long discussions, you know the pain: once a chat gets long, Chrome grinds to a halt. Typing lags, scrolling stutters, and your fans spin up.
+
+ChatGPT Turbo fixes this in one click.
+
+**⚡ What it does**
+
+Keeps ChatGPT blazing fast — even in threads with 500+ messages — by rendering only the latest messages. Configure exactly how many to keep visible.
+
+Older messages are one click away: scroll up and hit "Load more messages." Your full history stays intact.
+
+**✅ Why you'll love it**
+
+- Instant, lag-free typing and scrolling — even in enormous threads
+- Dramatically lower CPU and memory usage — Chrome stays responsive
+- No lost messages — your complete conversation history is untouched
+- Works automatically — install once and forget about it
+- Configure your own threshold — show 10, 30, 50, or 100 messages
+
+**🔒 100% Privacy — Verified by Open Source**
+
+All logic runs entirely on your device. Your chat data never leaves your browser.
+No data collection. No tracking. No analytics. No network requests. Period.
+
+Don't just take our word for it — read every line of our code on GitHub.
+
+**🆓 Free Forever — No Tricks**
+
+No "PRO" tier. No daily limits. No feature gates. No ads. No upsells.
+This is a community tool, built in the open, for everyone.
+
+**🛠 How it Works**
+
+The extension renders only the most recent messages to keep your browser fast. Need to see older parts of the conversation? Just scroll up and hit "Load more." Your full history remains safely on OpenAI's servers — we just make it easier for your browser to handle.
+
+This extension is an independent project and is not affiliated with, endorsed by, or sponsored by OpenAI or ChatGPT.
+
+## 7. Success Metrics
+- **Primary:** Chrome Web Store rating ≥ 4.5★
+- **Secondary:** 10,000 users within 3 months
+- **Technical:** <1% of users reporting broken functionality per ChatGPT update
+
+## 8. Risks & Mitigations
+
+| Risk | Impact | Mitigation |
+|------|--------|------------|
+| ChatGPT changes DOM structure | Extension breaks | Multiple fallback selectors, polling-based detection, fast update cycle |
+| Chrome MV3 API changes | Extension needs updates | Minimal API surface (only content script + popup) |
+| Users report "missing messages" | Negative reviews | Clear "Load more" UI, status badge, educational popup text |
+| Competitor with better UX | Slower growth | Open source advantage, zero cost, community contributions |

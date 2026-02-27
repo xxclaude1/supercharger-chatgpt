@@ -1,57 +1,91 @@
-# Supercharger for ChatGPT
+# CLAUDE.md – ChatGPT Turbo
 
-## What This Is
-A free Chrome extension that eliminates browser lag and freezing in long ChatGPT conversations by virtualizing the DOM — rendering only the most recent messages and lazy-loading older ones on demand.
+## Project Overview
+**ChatGPT Turbo** is a free, open-source Chrome extension that eliminates browser lag, freezing, and jitter in long ChatGPT conversations. It works by intelligently trimming the DOM — hiding older messages that cause rendering slowdowns while keeping them instantly accessible via a "Load more" button.
 
-## Core Principle
-**Eat the customer's complexity.** One click install, zero config needed, instantly works. The user should never think about this extension — it just makes ChatGPT fast.
+## Core Philosophy
+- **Free forever.** No paywalls, no pro tiers, no freemium gates. Zero monetization.
+- **Privacy-first.** No data collection, no analytics, no tracking. Everything runs locally.
+- **Minimal & surgical.** One job, done well. No bloat, no feature creep.
 
-## Technical Architecture
+## How It Works
+ChatGPT renders every message turn as a DOM node (an `<article>` element). In conversations with 100+ messages, the browser struggles to layout, paint, and composite thousands of nested DOM elements. This causes:
+- Typing lag and input delay
+- Scroll jitter and freezing
+- High CPU/memory usage
+- Battery drain on laptops
 
-### How It Works
-1. **Content Script** (`content.js`) runs on `chatgpt.com`
-2. **MutationObserver** watches the conversation container for new messages
-3. When message count exceeds threshold (default: 50), older messages get `display: none`
-4. A "Load more messages" banner appears at the top of the chat
-5. Clicking the banner reveals the next batch of hidden messages
-6. **Popup UI** lets users toggle the extension and adjust visible message count
+**Our solution:** Hide older messages via `display: none`, keeping only the N most recent visible. A MutationObserver watches for new messages and re-trims. A floating "Load more" button lets users reveal older messages on demand.
 
-### Key Technical Details
-- ChatGPT messages live in elements matching `[data-testid^="conversation-turn-"]`
-- We use `display: none` (not DOM removal) — simpler, reversible, still eliminates layout/paint cost
-- MutationObserver on the conversation container handles dynamic message loading
-- All processing is 100% local — zero network calls, zero data collection
-- Manifest V3 Chrome extension
+**Key architectural decisions:**
+- We **never delete** messages from the DOM — only hide them with CSS
+- We use `display: none` which fully removes elements from layout (not `visibility: hidden`)
+- We use `MutationObserver` + polling as a safety net for SPA navigation
+- Settings persist in `localStorage` scoped to chatgpt.com
+- All logic runs in a content script — no background service worker needed
 
-### File Structure
+## Tech Stack
+- **Manifest V3** Chrome Extension
+- **Vanilla JavaScript** — no frameworks, no build tools, no dependencies
+- **CSS** — injected styles for the Load More button and status badge
+
+## Project Structure
 ```
-supercharger-chatgpt/
-├── manifest.json          # Extension manifest (V3)
-├── content.js             # Core DOM trimming logic
-├── popup.html             # Extension popup UI
-├── popup.js               # Popup interaction logic
-├── popup.css              # Popup styles
-├── icons/                 # Extension icons (16, 48, 128px)
+chatgpt-turbo/
+├── manifest.json          # Extension manifest (MV3)
+├── src/
+│   ├── content.js         # Core engine — DOM trimming logic
+│   ├── styles.css         # Injected CSS for UI elements
+│   ├── popup.html         # Toolbar popup UI
+│   └── popup.js           # Popup interaction logic
+├── icons/
+│   ├── icon16.png
+│   ├── icon48.png
+│   └── icon128.png
+├── landing-page/
+│   └── index.html         # Marketing landing page
 ├── CLAUDE.md              # This file
-├── PRD.md                 # Product requirements
-├── STORE_LISTING.md       # Chrome Web Store copy
-├── .gitignore
-└── README.md              # (if needed)
+├── PRD.md                 # Product requirements document
+├── README.md              # Public README
+└── LICENSE                # MIT License
 ```
 
-## Development Rules
-- **Everything is free.** No paid tier, no freemium, no limits. Period.
-- **Privacy first.** Zero data collection, zero analytics, zero tracking. All processing local.
-- **Keep it simple.** Minimal code, minimal permissions, minimal footprint.
-- **No over-engineering.** This is a content script + popup. No build tools, no frameworks, no bundlers. Plain JS.
-- **Test on chatgpt.com** with long conversations (100+ messages) to verify performance gains.
+## Key Selectors (ChatGPT DOM)
+These are the CSS selectors we use to find messages. ChatGPT may change these — if the extension breaks, this is the first place to check:
 
-## Permissions Policy
-- Only request `activeTab` and host permission for `chatgpt.com` — nothing else.
-- No `storage` permission unless absolutely needed for settings persistence (use chrome.storage.local if needed).
+- **Primary:** `article[data-testid^="conversation-turn"]`
+- **Fallback 1:** `main article`
+- **Fallback 2:** First scrollable div inside `main` with 5+ children
 
-## Competitive Edge
-- **100% free** (competitor charges $7.99 for PRO)
-- **No limits** (competitor limits free tier to 30 lag-free prompts/day)
-- **Open source** (competitor is closed source)
-- **Simpler, lighter** — no bloat, no upsell banners, no license management
+## Configuration Defaults
+| Setting | Default | Range |
+|---------|---------|-------|
+| Visible messages | 30 | 10–100 |
+| Poll interval | 1500ms | — |
+| Load more batch | 20 | — |
+
+## Development
+```bash
+# Load as unpacked extension:
+# 1. Open chrome://extensions
+# 2. Enable "Developer mode"
+# 3. Click "Load unpacked"
+# 4. Select the chatgpt-turbo/ folder
+
+# No build step needed — it's vanilla JS
+```
+
+## ChatGPT DOM Changes
+ChatGPT updates their UI frequently. If the extension breaks:
+1. Open chatgpt.com, start a conversation
+2. Open DevTools → Elements
+3. Find the message containers (usually `<article>` tags)
+4. Update selectors in `getMessageElements()` and `getConversationContainer()`
+5. Test with a long conversation (50+ messages)
+
+## Principles for Contributors
+1. **No build tools.** The extension should work by loading the folder directly.
+2. **No external dependencies.** Everything is vanilla JS/CSS.
+3. **No data leaves the device.** Never add analytics, telemetry, or network requests.
+4. **Keep it tiny.** Target < 50KB total extension size.
+5. **Fail gracefully.** If selectors break, the page should still work normally — just without trimming.
