@@ -1,8 +1,20 @@
 /* ─── ChatGPT Turbo – Injected Styles ─────────────────────────── */
 
+/* CRITICAL: This is what actually hides the messages */
+.chatgpt-turbo-hidden {
+  display: none !important;
+  visibility: hidden !important;
+  height: 0 !important;
+  overflow: hidden !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: none !important;
+  opacity: 0 !important;
+}
+
 /* Load More Button */
 .chatgpt-turbo-load-more {
-  display: flex;
+  display: flex !important;
   align-items: center;
   justify-content: center;
   gap: 8px;
@@ -20,6 +32,7 @@
   cursor: pointer;
   transition: all 0.2s ease;
   letter-spacing: 0.01em;
+  z-index: 9999;
 }
 
 .chatgpt-turbo-load-more:hover {
@@ -36,15 +49,15 @@
 
 /* Status Badge */
 .chatgpt-turbo-badge {
-  position: fixed;
-  bottom: 16px;
-  left: 16px;
-  z-index: 10000;
-  padding: 6px 14px;
-  border-radius: 20px;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  font-size: 11px;
-  font-weight: 600;
+  position: fixed !important;
+  bottom: 16px !important;
+  left: 16px !important;
+  z-index: 99999 !important;
+  padding: 6px 14px !important;
+  border-radius: 20px !important;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif !important;
+  font-size: 11px !important;
+  font-weight: 600 !important;
   letter-spacing: 0.03em;
   pointer-events: none;
   transition: all 0.3s ease;
@@ -53,19 +66,14 @@
 }
 
 .chatgpt-turbo-badge-active {
-  background: rgba(16, 185, 129, 0.15);
-  color: #6ee7b7;
-  border: 1px solid rgba(16, 185, 129, 0.25);
+  background: rgba(16, 185, 129, 0.15) !important;
+  color: #6ee7b7 !important;
+  border: 1px solid rgba(16, 185, 129, 0.25) !important;
   box-shadow: 0 2px 12px rgba(16, 185, 129, 0.1);
 }
 
 .chatgpt-turbo-badge-idle {
-  background: rgba(100, 116, 139, 0.12);
-  color: #94a3b8;
-  border: 1px solid rgba(100, 116, 139, 0.15);
-}
-
-/* Smooth reveal animation when messages become visible */
-.chatgpt-turbo-hidden {
-  display: none !important;
+  background: rgba(100, 116, 139, 0.12) !important;
+  color: #94a3b8 !important;
+  border: 1px solid rgba(100, 116, 139, 0.15) !important;
 }
